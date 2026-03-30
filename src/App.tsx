@@ -717,6 +717,7 @@ export default function App() {
     lastShuffleTime: 0,
     particles: [] as Particle[],
     screenShake: 0,
+    lastResults: null as any,
   });
 
   useEffect(() => {
@@ -771,10 +772,26 @@ export default function App() {
     }
   };
 
+  // Helper function for rounded rectangles
+  const drawRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) => {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  };
+
   const startMediaPipe = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     
     const videoElement = videoRef.current;
+    videoElement.muted = true; // Ensure muted is set for autoplay policies
     const canvasElement = canvasRef.current;
     const canvasCtx = canvasElement.getContext('2d');
     
@@ -792,13 +809,19 @@ export default function App() {
     });
 
     hands.onResults((results: any) => {
-      const state = gameState.current;
-      const now = Date.now();
+      gameState.current.lastResults = results;
+    });
+
+    const gameLoop = () => {
+      try {
+        const state = gameState.current;
+        const now = Date.now();
+        const results = state.lastResults;
       
       // Clear canvas
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // Draw video frame
+      // Apply screen shake to the whole canvas context if needed
       canvasCtx.save();
       if (state.screenShake > 0) {
         const dx = (Math.random() - 0.5) * state.screenShake;
@@ -807,18 +830,9 @@ export default function App() {
         state.screenShake *= 0.9;
         if (state.screenShake < 0.1) state.screenShake = 0;
       }
-      canvasCtx.translate(canvasElement.width, 0);
-      canvasCtx.scale(-1, 1);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.restore();
-
-      // If not playing, just show camera background
-      // if (state.mode !== 'quiz') {
-      //   return;
-      // }
 
       // Process Hand Landmarks
-      if (results.multiHandLandmarks) {
+      if (results && results.multiHandLandmarks) {
         // Update cursors array to match number of hands
         if (state.cursors.length !== results.multiHandLandmarks.length) {
           state.cursors = results.multiHandLandmarks.map((_: any, i: number) => ({
@@ -856,7 +870,7 @@ export default function App() {
           
           if (distance < 40) {
             cursor.isGrabbing = true;
-            if (cursor.grabbedItemId === null) {
+            if (cursor.grabbedItemId === null && state.mode === 'quiz') {
               // Try to grab an item
               for (let i = state.items.length - 1; i >= 0; i--) {
                 const item = state.items[i];
@@ -870,7 +884,7 @@ export default function App() {
                   break;
                 }
               }
-            } else {
+            } else if (cursor.grabbedItemId !== null && state.mode === 'quiz') {
               // Already grabbing - check for bin collision while holding
               const item = state.items.find(i => i.id === cursor.grabbedItemId);
               if (item) {
@@ -880,7 +894,7 @@ export default function App() {
                 
                 if (distToBin < 120) {
                   const currentQ = state.questions[state.questionIndex];
-                  if (item.label === currentQ.correct) {
+                  if (currentQ && item.label === currentQ.correct) {
                     const pName = state.playerNames[index] || `Người chơi ${index + 1}`;
                     state.playerScores[index] += 100;
                     state.score += 100;
@@ -983,63 +997,65 @@ export default function App() {
         });
       }
 
-      // Quiz Spawning Logic
-      if (Date.now() > state.cooldownUntil && state.items.length === 0) {
-        const labels = ['A', 'B', 'C', 'D'];
-        labels.forEach((label, i) => {
-          state.items.push({
-            id: Date.now() + i,
-            type: 'answer',
-            emoji: '',
-            label: label,
-            x: Math.random() * (state.width - 100) + 50,
-            y: -50 - (i * 100), // Staggered spawn
-            size: 60,
-            speed: 2 + Math.random() * 1.5,
-            isGrabbed: false,
-            grabbedBy: null,
-            isLarge: false
+      if (state.mode === 'quiz') {
+        // Quiz Spawning Logic
+        if (Date.now() > state.cooldownUntil && state.items.length === 0) {
+          const labels = ['A', 'B', 'C', 'D'];
+          labels.forEach((label, i) => {
+            state.items.push({
+              id: Date.now() + i,
+              type: 'answer',
+              emoji: '',
+              label: label,
+              x: Math.random() * (state.width - 100) + 50,
+              y: -50 - (i * 100), // Staggered spawn
+              size: 60,
+              speed: 2 + Math.random() * 1.5,
+              isGrabbed: false,
+              grabbedBy: null,
+              isLarge: false
+            });
           });
-        });
-        state.lastShuffleTime = Date.now();
-      }
+          state.lastShuffleTime = Date.now();
+        }
 
-      // Dynamic Shuffling Logic (Every 3 seconds)
-      if (state.items.length > 0 && Date.now() - state.lastShuffleTime > 3000) {
-        state.items.forEach(item => {
-          if (item.grabbedBy === null) {
-            item.x = Math.random() * (state.width - 100) + 50;
-            // Add some particles on shuffle
-            for (let i = 0; i < 5; i++) {
-              state.particles.push({
-                x: item.x,
-                y: item.y,
-                vx: (Math.random() - 0.5) * 5,
-                vy: (Math.random() - 0.5) * 5,
-                life: 0.5,
-                color: '#FFFFFF',
-                size: 2
-              });
+        // Dynamic Shuffling Logic (Every 3 seconds)
+        if (state.items.length > 0 && Date.now() - state.lastShuffleTime > 3000) {
+          state.items.forEach(item => {
+            if (item.grabbedBy === null) {
+              item.x = Math.random() * (state.width - 100) + 50;
+              // Add some particles on shuffle
+              for (let i = 0; i < 5; i++) {
+                state.particles.push({
+                  x: item.x,
+                  y: item.y,
+                  vx: (Math.random() - 0.5) * 5,
+                  vy: (Math.random() - 0.5) * 5,
+                  life: 0.5,
+                  color: '#FFFFFF',
+                  size: 2
+                });
+              }
             }
-          }
-        });
-        state.lastShuffleTime = Date.now();
-      }
+          });
+          state.lastShuffleTime = Date.now();
+        }
 
-      // Update items
-      for (let i = state.items.length - 1; i >= 0; i--) {
-        const item = state.items[i];
-        if (item.grabbedBy !== null) {
-          const cursor = state.cursors[item.grabbedBy];
-          if (cursor) {
-            item.x = cursor.x;
-            item.y = cursor.y;
-          }
-        } else {
-          item.y += item.speed;
-          if (item.y > state.height + 50) {
-            item.y = -50;
-            item.x = Math.random() * (state.width - 100) + 50;
+        // Update items
+        for (let i = state.items.length - 1; i >= 0; i--) {
+          const item = state.items[i];
+          if (item.grabbedBy !== null) {
+            const cursor = state.cursors[item.grabbedBy];
+            if (cursor) {
+              item.x = cursor.x;
+              item.y = cursor.y;
+            }
+          } else {
+            item.y += item.speed;
+            if (item.y > state.height + 50) {
+              item.y = -50;
+              item.x = Math.random() * (state.width - 100) + 50;
+            }
           }
         }
       }
@@ -1066,67 +1082,66 @@ export default function App() {
       });
       canvasCtx.globalAlpha = 1.0;
 
-      // Draw Bin (Blackboard Style)
-      const binCenterX = state.width / 2;
-      const binCenterY = state.height - 150;
-      const binW = 240;
-      const binH = 140;
-      
-      canvasCtx.save();
-      // Shadow
-      canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
-      canvasCtx.shadowBlur = 15;
-      
-      // Board border
-      canvasCtx.fillStyle = '#3d2b1f'; // Wood color
-      canvasCtx.beginPath();
-      canvasCtx.roundRect(binCenterX - binW/2 - 10, binCenterY - binH/2 - 10, binW + 20, binH + 20, 10);
-      canvasCtx.fill();
-      
-      // Board surface
-      canvasCtx.fillStyle = '#1e3a2f'; // Dark green board
-      canvasCtx.beginPath();
-      canvasCtx.roundRect(binCenterX - binW/2, binCenterY - binH/2, binW, binH, 5);
-      canvasCtx.fill();
-      
-      // Chalk text
-      canvasCtx.font = 'bold 20px "Comic Sans MS", cursive';
-      canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      canvasCtx.textAlign = 'center';
-      canvasCtx.fillText('KÉO ĐÁP ÁN', binCenterX, binCenterY - 15);
-      canvasCtx.fillText('VÀO ĐÂY', binCenterX, binCenterY + 25);
-      
-      // Dashed drop zone
-      canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-      canvasCtx.setLineDash([5, 5]);
-      canvasCtx.lineWidth = 2;
-      canvasCtx.strokeRect(binCenterX - binW/2 + 10, binCenterY - binH/2 + 10, binW - 20, binH - 20);
-      
-      canvasCtx.restore();
-
-      // Draw Items
-      state.items.forEach(item => {
+      if (state.mode === 'quiz') {
+        // Draw Bin (Blackboard Style)
+        const binCenterX = state.width / 2;
+        const binCenterY = state.height - 150;
+        const binW = 240;
+        const binH = 140;
+        
         canvasCtx.save();
-        canvasCtx.fillStyle = '#FFF';
+        // Shadow
         canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
-        canvasCtx.shadowBlur = 10;
+        canvasCtx.shadowBlur = 15;
         
-        const boxSize = item.size + 20;
-        canvasCtx.fillStyle = 'rgba(30, 41, 59, 0.8)';
-        canvasCtx.strokeStyle = '#60A5FA';
-        canvasCtx.lineWidth = 3;
-        canvasCtx.beginPath();
-        canvasCtx.roundRect(item.x - boxSize/2, item.y - boxSize/2, boxSize, boxSize, 10);
+        // Board border
+        canvasCtx.fillStyle = '#3d2b1f'; // Wood color
+        drawRoundRect(canvasCtx, binCenterX - binW/2 - 10, binCenterY - binH/2 - 10, binW + 20, binH + 20, 10);
         canvasCtx.fill();
-        canvasCtx.stroke();
         
-        canvasCtx.fillStyle = '#FFF';
-        canvasCtx.font = `bold ${item.size}px Arial`;
+        // Board surface
+        canvasCtx.fillStyle = '#1e3a2f'; // Dark green board
+        drawRoundRect(canvasCtx, binCenterX - binW/2, binCenterY - binH/2, binW, binH, 5);
+        canvasCtx.fill();
+        
+        // Chalk text
+        canvasCtx.font = 'bold 20px "Comic Sans MS", cursive';
+        canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
         canvasCtx.textAlign = 'center';
-        canvasCtx.textBaseline = 'middle';
-        canvasCtx.fillText(item.label || '', item.x, item.y);
+        canvasCtx.fillText('KÉO ĐÁP ÁN', binCenterX, binCenterY - 15);
+        canvasCtx.fillText('VÀO ĐÂY', binCenterX, binCenterY + 25);
+        
+        // Dashed drop zone
+        canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        canvasCtx.setLineDash([5, 5]);
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeRect(binCenterX - binW/2 + 10, binCenterY - binH/2 + 10, binW - 20, binH - 20);
+        
         canvasCtx.restore();
-      });
+
+        // Draw Items
+        state.items.forEach(item => {
+          canvasCtx.save();
+          canvasCtx.fillStyle = '#FFF';
+          canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
+          canvasCtx.shadowBlur = 10;
+          
+          const boxSize = item.size + 20;
+          canvasCtx.fillStyle = 'rgba(30, 41, 59, 0.8)';
+          canvasCtx.strokeStyle = '#60A5FA';
+          canvasCtx.lineWidth = 3;
+          drawRoundRect(canvasCtx, item.x - boxSize/2, item.y - boxSize/2, boxSize, boxSize, 10);
+          canvasCtx.fill();
+          canvasCtx.stroke();
+          
+          canvasCtx.fillStyle = '#FFF';
+          canvasCtx.font = `bold ${item.size}px Arial`;
+          canvasCtx.textAlign = 'center';
+          canvasCtx.textBaseline = 'middle';
+          canvasCtx.fillText(item.label || '', item.x, item.y);
+          canvasCtx.restore();
+        });
+      }
 
       // Draw Cursors
       state.cursors.forEach((cursor, i) => {
@@ -1161,11 +1176,30 @@ export default function App() {
         canvasCtx.fillText(`${name}: ${score}`, 30, 30 + i * 35);
       });
       canvasCtx.restore();
-    });
 
+      // Restore the context saved for screen shake
+      canvasCtx.restore();
+      } catch (e) {
+        console.error("Error in game loop:", e);
+      }
+      requestAnimationFrame(gameLoop);
+    };
+    
+    // Start the game loop
+    requestAnimationFrame(gameLoop);
+
+    let isProcessing = false;
     const camera = new window.Camera(videoElement, {
       onFrame: async () => {
-        await hands.send({image: videoElement});
+        if (isProcessing) return;
+        isProcessing = true;
+        try {
+          await hands.send({image: videoElement});
+        } catch (e) {
+          console.error("Error in hands.send:", e);
+        } finally {
+          isProcessing = false;
+        }
       },
       width: 1280,
       height: 720
@@ -1197,6 +1231,9 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* Camera Background */}
+      <video ref={videoRef} className="absolute inset-0 z-0 w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} playsInline autoPlay muted></video>
+
       {/* Main Game Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 z-10 w-full h-full object-cover"></canvas>
 
@@ -1788,17 +1825,23 @@ export default function App() {
       {uiMode === 'quiz' && (
         <div className="absolute top-10 left-0 w-full z-50 flex flex-col items-center pointer-events-none">
           <div className="bg-slate-900/80 backdrop-blur-md p-6 rounded-2xl border-2 border-blue-500 shadow-2xl max-w-3xl w-[90%] text-center">
-            <h2 className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-2">Câu hỏi {gameState.current.questionIndex + 1} / {gameState.current.questions.length}</h2>
-            <p className="text-2xl font-bold mb-6 leading-tight">
-              {gameState.current.questions[gameState.current.questionIndex].q}
-            </p>
-            <div className="grid grid-cols-2 gap-4 text-left">
-              {Object.entries(gameState.current.questions[gameState.current.questionIndex].options).map(([key, val]) => (
-                <div key={key} className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 text-lg">
-                  <span className="text-blue-400 font-bold mr-2">{key}.</span> {val}
+            <h2 className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-2">Câu hỏi {gameState.current.questions.length > 0 ? gameState.current.questionIndex + 1 : 0} / {gameState.current.questions.length}</h2>
+            {gameState.current.questions[gameState.current.questionIndex] ? (
+              <>
+                <p className="text-2xl font-bold mb-6 leading-tight">
+                  {gameState.current.questions[gameState.current.questionIndex].q}
+                </p>
+                <div className="grid grid-cols-2 gap-4 text-left">
+                  {Object.entries(gameState.current.questions[gameState.current.questionIndex].options).map(([key, val]) => (
+                    <div key={key} className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 text-lg">
+                      <span className="text-blue-400 font-bold mr-2">{key}.</span> {val}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <p className="text-xl">Đang tải câu hỏi...</p>
+            )}
           </div>
           
           {/* Feedback Overlay */}
@@ -1890,7 +1933,6 @@ export default function App() {
       )}
 
       {/* Hidden video element for MediaPipe */}
-      <video ref={videoRef} className="hidden" playsInline autoPlay></video>
     </div>
     </ErrorBoundary>
   );
