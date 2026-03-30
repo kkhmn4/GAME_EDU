@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (getUserData().role == 'admin' || 
+         (request.auth.token.email == "hiep.kha@wellspringsaigon.edu.vn" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'displayName']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'student'] &&
+             data.displayName is string &&
+             data.displayName.size() < 100;
+    }
+
+    function isValidQuestionSet(data) {
+      return data.keys().hasAll(['title']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200;
+    }
+
+    function isValidQuestion(data) {
+      return data.keys().hasAll(['q', 'options', 'correct', 'setId']) &&
+             data.q is string && data.q.size() > 0 && data.q.size() < 1000 &&
+             data.options is map &&
+             data.correct in ['A', 'B', 'C', 'D'] &&
+             data.setId is string;
+    }
+
+    function isValidHistory(data) {
+      return data.keys().hasAll(['studentUid', 'studentName', 'score', 'timestamp', 'setId', 'setTitle']) &&
+             data.studentUid is string &&
+             data.studentName is string &&
+             data.score is number &&
+             data.timestamp is timestamp &&
+             data.setId is string &&
+             data.setTitle is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == 'student' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                    request.resource.data.role == resource.data.role;
+    }
+
+    // QuestionSets collection
+    match /questionSets/{setId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidQuestionSet(request.resource.data);
+    }
+
+    // Questions collection
+    match /questions/{questionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidQuestion(request.resource.data);
+    }
+
+    // History collection
+    match /history/{historyId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentUid == request.auth.uid);
+      allow create: if isAuthenticated() && isValidHistory(request.resource.data) && 
+                    request.resource.data.studentUid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

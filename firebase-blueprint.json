@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Thông tin người dùng và phân quyền",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "Email người dùng" },
+        "displayName": { "type": "string", "description": "Tên hiển thị" },
+        "role": { "type": "string", "enum": ["admin", "student"], "description": "Vai trò: admin (thầy cô) hoặc student (học sinh)" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "QuestionSet": {
+      "title": "QuestionSet",
+      "description": "Bộ câu hỏi theo bài học",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Tên bộ câu hỏi/bài học" },
+        "description": { "type": "string", "description": "Mô tả ngắn" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "Câu hỏi trắc nghiệm trong bộ",
+      "type": "object",
+      "properties": {
+        "setId": { "type": "string", "description": "ID của bộ câu hỏi" },
+        "q": { "type": "string", "description": "Nội dung câu hỏi" },
+        "options": { 
+          "type": "object", 
+          "properties": {
+            "A": { "type": "string" },
+            "B": { "type": "string" },
+            "C": { "type": "string" },
+            "D": { "type": "string" }
+          }
+        },
+        "correct": { "type": "string", "enum": ["A", "B", "C", "D"] }
+      }
+    },
+    "GameHistory": {
+      "title": "GameHistory",
+      "description": "Lịch sử ván đấu",
+      "type": "object",
+      "properties": {
+        "studentUid": { "type": "string" },
+        "studentName": { "type": "string" },
+        "score": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "details": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "Thông tin chi tiết người dùng"
+    },
+    "/questionSets/{setId}": {
+      "schema": "QuestionSet",
+      "description": "Danh sách các bộ câu hỏi"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Danh sách câu hỏi (có setId)"
+    },
+    "/history/{historyId}": {
+      "schema": "GameHistory",
+      "description": "Lịch sử chơi của học sinh"
+    }
+  }
+}
