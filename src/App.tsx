@@ -412,9 +412,19 @@ export default function App() {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
+      console.log("Starting login...");
+      const result = await signInWithPopup(auth, provider);
+      console.log("Login success:", result.user.email);
+    } catch (error: any) {
       console.error("Login Error:", error);
+      // Show error to user via alert or UI state
+      if (error.code === 'auth/popup-blocked') {
+        alert("Trình duyệt đã chặn cửa sổ đăng nhập. Vui lòng bật popup cho trang web này.");
+      } else if (error.code === 'auth/unauthorized-domain') {
+        alert("Tên miền này chưa được ủy quyền trong Firebase Console. Vui lòng thêm " + window.location.hostname + " vào danh sách Authorized Domains.");
+      } else {
+        alert("Lỗi đăng nhập: " + error.message);
+      }
     }
   };
 
